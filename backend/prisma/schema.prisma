@@ -1,0 +1,173 @@
+// Esquema de datos del panel de órdenes de producción
+// Docs: https://www.prisma.io/docs/orm/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Enums ----------
+
+enum MachineStatus {
+  ACTIVE // operativa
+  MAINTENANCE // en mantenimiento
+  INACTIVE // fuera de servicio
+}
+
+enum OrderStatus {
+  PENDING // creada, sin empezar
+  IN_PROGRESS // en fabricación
+  DONE // terminada
+  CANCELLED // cancelada
+}
+
+enum Role {
+  ADMIN
+  EMPLOYEE
+}
+
+// Motivo por el que un empleado cierra su tramo de trabajo
+enum StopReason {
+  END_OF_SHIFT // fin de jornada
+  BREAK // descanso
+  MACHINE_ISSUE // incidencia en la máquina (exige nota)
+  LINE_CHANGE // cambio a otra línea
+}
+
+// Turnos de planta, en hora local de PLANT_TIME_ZONE (shifts.time.ts)
+enum ShiftType {
+  MORNING // 06:00–14:00
+  AFTERNOON // 14:00–22:00
+  NIGHT // 22:00–06:00 del día siguiente
+}
+
+// ---------- Modelos ----------
+
+model Machine {
+  id           Int                  @id @default(autoincrement())
+  code         String               @unique // p. ej. "MAQ-01"
+  name         String
+  status       MachineStatus        @default(ACTIVE)
+  orders       ProductionOrder[]
+  maintenances MachineMaintenance[]
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+}
+
+// Periodo de una máquina en MAINTENANCE. endedAt null = sigue en mantenimiento.
+// Se abre al cerrar un WorkLog con MACHINE_ISSUE (workLogId) o al pasarla a mano
+// (workLogId null), y se cierra al cambiarle el estado. En la migración: índice
+// único parcial (uno abierto por máquina) y CHECK startedAt < endedAt.
+model MachineMaintenance {
+  id        Int       @id @default(autoincrement())
+  machineId Int
+  machine   Machine   @relation(fields: [machineId], references: [id], onDelete: Cascade)
+  workLogId Int?      @unique
+  workLog   WorkLog?  @relation(fields: [workLogId], references: [id], onDelete: SetNull)
+  startedAt DateTime  @default(now())
+  endedAt   DateTime?
+
+  @@index([machineId, startedAt])
+}
+
+model ProductionOrder {
+  id           Int         @id @default(autoincrement())
+  code         String      @unique // p. ej. "OF-2026-0001"
+  product      String
+  quantity     Int // unidades a fabricar
+  producedQty  Int         @default(0) // unidades fabricadas
+  cycleTimeSec Float? // segundos por pieza a ritmo ideal (para el Rendimiento del OEE)
+  status       OrderStatus @default(PENDING)
+
+  machineId Int?
+  machine   Machine? @relation(fields: [machineId], references: [id], onDelete: SetNull)
+
+  assignedEmployeeId Int?
+  assignedEmployee   Employee? @relation(fields: [assignedEmployeeId], references: [id], onDelete: SetNull)
+  workLogs           WorkLog[]
+
+  plannedStart DateTime?
+  // Posición en la cola de su máquina (0 = la primera). null = sin colocar: va al final
+  priority     Int?
+  startedAt    DateTime?
+  finishedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([machineId, priority])
+  @@index([assignedEmployeeId])
+}
+
+model Employee {
+  id                  Int               @id @default(autoincrement())
+  code                String            @unique // p. ej. "EMP-01"
+  name                String
+  pinHash             String? // hash bcrypt del PIN; sin PIN no puede entrar en planta
+  // Bloqueo por fallos: se cuentan desde firstFailedLoginAt durante 1 h
+  failedLoginAttempts Int               @default(0)
+  firstFailedLoginAt  DateTime?
+  lockedUntil         DateTime?
+  active              Boolean           @default(true)
+  assignedOrders      ProductionOrder[]
+  workLogs            WorkLog[]
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+}
+
+// Tramo de trabajo de un empleado en una orden. endedAt null = abierto.
+// Índices únicos parciales (en las migraciones, Prisma no los soporta en el schema):
+// como máximo un WorkLog abierto por orden y uno por empleado.
+model WorkLog {
+  id          Int                 @id @default(autoincrement())
+  employeeId  Int
+  employee    Employee            @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  orderId     Int
+  order       ProductionOrder     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  startedAt   DateTime            @default(now())
+  endedAt     DateTime?
+  producedQty Int                 @default(0) // unidades fabricadas en este tramo
+  stopReason  StopReason? // null mientras está abierto
+  note        String? // obligatoria si stopReason = MACHINE_ISSUE
+  maintenance MachineMaintenance? // el mantenimiento que abrió (MACHINE_ISSUE)
+
+  @@index([employeeId])
+  @@index([orderId])
+}
+
+model User {
+  id                  Int       @id @default(autoincrement())
+  email               String    @unique
+  passwordHash        String // hash bcrypt, nunca la contraseña en claro
+  failedLoginAttempts Int       @default(0)
+  firstFailedLoginAt  DateTime?
+  lockedUntil         DateTime?
+  name                String
+  role                Role      @default(ADMIN)
+  closedShifts        Shift[]
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+}
+
+// Un turno concreto. `date` es el día local en que empieza (el de noche del día 5
+// acaba el 6). startsAt/endsAt en UTC, calculados al crearlo: con los cambios de
+// hora un turno puede durar 7 o 9 horas. CHECK startsAt < endsAt en la migración.
+model Shift {
+  id         Int       @id @default(autoincrement())
+  date       DateTime  @db.Date
+  type       ShiftType
+  startsAt   DateTime
+  endsAt     DateTime
+  closedAt   DateTime?
+  closedById Int?
+  closedBy   User?     @relation(fields: [closedById], references: [id], onDelete: SetNull)
+  createdAt  DateTime  @default(now())
+
+  @@unique([date, type])
+  @@index([startsAt])
+}

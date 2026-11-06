@@ -1,0 +1,9 @@
+{
+  // Solo para comprobar tipos de los tests: npx tsc -p tsconfig.test.json
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true
+  },
+  "include": ["src", "test", "vitest.config.ts"]
+}
