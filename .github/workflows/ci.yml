@@ -1,0 +1,99 @@
+name: CI
+
+# ── CUÁNDO se ejecuta ─────────────────────────────────────────
+on:
+  push:
+    branches: [main] # cada push a main
+  pull_request:
+    branches: [main] # cada PR que apunte a main
+
+jobs:
+  # ── JOB 1: BACKEND ──────────────────────────────────────────
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest # máquina Linux limpia, creada para esta ejecución
+
+    defaults:
+      run:
+        working-directory: backend # todos los "run" se ejecutan dentro de backend/
+
+    # Base de datos solo para los tests. Configurada IGUAL que db-test
+    # de tu docker-compose, para que .env.test funcione sin cambios
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: mes
+          POSTGRES_PASSWORD: mes
+          POSTGRES_DB: mes_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+
+      - name: Instalar Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Generar Prisma Client
+        run: npx prisma generate
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Comprobar tipos
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  # ── JOB 2: FRONTEND (se ejecuta a la vez que el backend) ────
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v4
+
+      - name: Instalar Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Comprobar tipos
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
