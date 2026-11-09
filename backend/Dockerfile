@@ -1,4 +1,4 @@
-FROM node:22-alpine AS base
+FROM node:24-alpine AS base
 # Prisma necesita OpenSSL para su motor de consultas
 RUN apk add --no-cache openssl
 WORKDIR /app

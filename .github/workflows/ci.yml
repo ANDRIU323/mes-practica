@@ -97,3 +97,47 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  # ── JOB 3: IMÁGENES DOCKER ──────────────────────────────────
+  # Solo empieza si Backend y Frontend han pasado.
+  # En una PR solo construye (comprueba que los Dockerfiles funcionan).
+  # En un push a main (es decir, tras un merge) además las publica en GHCR.
+  docker:
+    name: Docker
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write # permiso para publicar en GitHub Container Registry
+
+    # El mismo job se ejecuta dos veces: una con app=backend y otra con app=frontend
+    strategy:
+      matrix:
+        app: [backend, frontend]
+
+    steps:
+      - name: Descargar el código
+        uses: actions/checkout@v5
+
+      - name: Iniciar sesión en GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Preparar Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Construir (y publicar si es main)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ matrix.app }}
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            ghcr.io/andriu323/mes-practica-${{ matrix.app }}:latest
+            ghcr.io/andriu323/mes-practica-${{ matrix.app }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
