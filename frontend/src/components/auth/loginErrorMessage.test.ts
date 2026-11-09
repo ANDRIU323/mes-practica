@@ -16,6 +16,6 @@ describe("loginErrorMessage", () => {
   it("el resto de errores muestran su mensaje", () => {
     expect(
       loginErrorMessage(new ApiError(401, "Código o PIN incorrectos", null)),
-    ).toBe("Esto va a fallar");
+    ).toBe("Código o PIN incorrectos");
   });
 });
